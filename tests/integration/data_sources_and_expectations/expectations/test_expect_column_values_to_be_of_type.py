@@ -14,6 +14,7 @@ from tests.integration.test_utils.data_source_config import (
     DatabricksDatasourceTestConfig,
     GenericSQLDatasourceTestConfig,
     MySQLDatasourceTestConfig,
+    OracleDatasourceTestConfig,
     PandasDataFrameDatasourceTestConfig,
     PandasFilesystemCsvDatasourceTestConfig,
     PostgreSQLDatasourceTestConfig,
@@ -264,3 +265,21 @@ def test_unresolvable_type_name_raises_rather_than_reporting_a_mismatch(
     assert result.exception_info["raised_exception"] is True
     assert "INTGER" in result.exception_info["exception_message"]
     assert "sqlite" in result.exception_info["exception_message"]
+
+
+@parameterize_batch_for_data_sources(
+    data_source_configs=[OracleDatasourceTestConfig()],
+    data=DATA,
+)
+def test_success_for_type__INTEGER_oracle(batch_for_datasource: Batch) -> None:
+    """Oracle reflects this column as a generic ``sqlalchemy.INTEGER`` and reports it as such.
+
+    ``sqlalchemy.dialects.oracle`` does not export ``INTEGER``, so the expected-type lookup on
+    the dialect module comes back empty and ``isinstance(value, ())`` is unconditionally False:
+    the expectation rejects the very type name it reports as ``observed_value``.
+    """
+    result = batch_for_datasource.validate(
+        gxe.ExpectColumnValuesToBeOfType(column=INTEGER_COLUMN, type_="INTEGER")
+    )
+    assert result.result["observed_value"] == "INTEGER"
+    assert result.success, result.result

@@ -843,6 +843,188 @@ class TestPartialDialectModuleFallback:
 
 
 # ===========================================================================
+# Names that collide with non-type members of the sqlalchemy namespace
+# ===========================================================================
+
+
+class TestNonTypeNamesInGenericNamespace:
+    """``sqlalchemy`` exports functions and generators as well as types.
+
+    A candidate that is not a class makes ``isinstance`` raise ``TypeError`` instead
+    of comparing anything, so such a name counts as unresolved.
+    """
+
+    engine = _StubEngine("sqlite", dialect_module=sa)
+
+    @pytest.mark.parametrize("name", ["text", "cast", "func", "select", "table"])
+    def test_scalar_raises_rather_than_type_error(self, name):
+        with pytest.raises(InvalidExpectationConfigurationError, match=name):
+            compare_column_type(self.engine, sa.types.INTEGER(), name)
+
+    @pytest.mark.parametrize("name", ["text", "cast", "func", "select", "table"])
+    def test_one_bad_name_does_not_poison_the_list(self, name):
+        success, _obs = compare_column_type_list(
+            self.engine,
+            sa.types.INTEGER(),
+            [name, "INTEGER"],
+        )
+        assert success is True
+
+    def test_list_of_only_non_type_names_raises(self):
+        with pytest.raises(InvalidExpectationConfigurationError, match="text"):
+            compare_column_type_list(self.engine, sa.types.INTEGER(), ["text", "cast"])
+
+    def test_empty_list_reports_a_failed_match(self):
+        """An empty list names no type to report as unresolvable."""
+        success, _obs = compare_column_type_list(self.engine, sa.types.INTEGER(), [])
+        assert success is False
+
+
+# ===========================================================================
+# BigQuery GEOGRAPHY without the optional extra
+# ===========================================================================
+
+
+class _StubBigQueryEngine:
+    """A stub carrying the ``engine.dialect.name`` the GEOGRAPHY check reads."""
+
+    dialect_name = GXSqlDialect.BIGQUERY
+    dialect_module = sa
+
+    class engine:  # mirrors the attribute name on the real engine
+        class dialect:
+            name = "bigquery"
+
+
+class TestBigQueryGeographyWithoutExtra:
+    """Missing optional support is not a misspelled name.
+
+    ``sqlalchemy-bigquery[geography]`` being absent is already diagnosed by a warning
+    naming the extra to install, so the comparison must not raise over the spelling.
+    """
+
+    engine = _StubBigQueryEngine()
+
+    @pytest.fixture(autouse=True)
+    def _without_geo_support(self, monkeypatch):
+        monkeypatch.setattr(type_comparison, "BIGQUERY_GEO_SUPPORT", False)
+
+    def test_scalar_fails_without_raising(self):
+        success, _obs = compare_column_type(self.engine, sa.types.INTEGER(), "GEOGRAPHY")
+        assert success is False
+
+    def test_list_fails_without_raising(self):
+        success, _obs = compare_column_type_list(self.engine, sa.types.INTEGER(), ["GEOGRAPHY"])
+        assert success is False
+
+    def test_a_resolvable_name_beside_it_still_matches(self):
+        success, _obs = compare_column_type_list(
+            self.engine,
+            sa.types.INTEGER(),
+            ["GEOGRAPHY", "INTEGER"],
+        )
+        assert success is True
+
+    def test_a_misspelling_alongside_it_still_does_not_raise(self):
+        """The list is inconclusive as a whole, so nothing here is called a typo."""
+        success, _obs = compare_column_type_list(
+            self.engine,
+            sa.types.INTEGER(),
+            ["GEOGRAPHY", "__NO_SUCH_TYPE__"],
+        )
+        assert success is False
+
+
+# ===========================================================================
+# ClickHouse — a dialect that answers every name
+# ===========================================================================
+
+
+class _StubClickHouseDialect:
+    ischema_names = {"Int32": sa.types.INTEGER}
+
+    def _get_column_type(self, name, spec):
+        """Mirror ClickHouseDialect, which returns NullType for a spec it rejects."""
+        return self.ischema_names.get(spec, sa.types.NullType)
+
+
+class _StubClickHouseModule:
+    __name__ = "clickhouse_sqlalchemy.drivers.base"
+    ClickHouseDialect = _StubClickHouseDialect
+
+    class types:
+        Decimal = sa.types.DECIMAL
+        String = sa.types.String
+
+
+class TestClickHouseUnrecognizedSpec:
+    """ClickHouse answers an unknown spec with NullType rather than an error.
+
+    Left in place that makes every comparison an isinstance against NullType, so the
+    name has to be treated as unresolved for the dialect to report it at all.
+    """
+
+    engine = _StubEngine(GXSqlDialect.CLICKHOUSE, dialect_module=_StubClickHouseModule())
+
+    def test_known_spec_still_resolves(self):
+        success, _obs = compare_column_type(self.engine, sa.types.INTEGER(), "Int32")
+        assert success is True
+
+    def test_unrecognized_spec_raises(self):
+        with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):
+            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+
+    def test_unrecognized_spec_in_a_list_raises_when_nothing_resolves(self):
+        with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):
+            compare_column_type_list(
+                self.engine,
+                sa.types.INTEGER(),
+                ["__NO_SUCH_TYPE__", "__ALSO_NO_SUCH_TYPE__"],
+            )
+
+    def test_generic_fallback_still_applies(self):
+        """A name ClickHouse rejects but the generic namespace carries still resolves."""
+        success, _obs = compare_column_type(self.engine, sa.types.INTEGER(), "INTEGER")
+        assert success is True
+
+
+# ===========================================================================
+# Dialects reaching the comparison with no dialect module
+# ===========================================================================
+
+
+class TestNoDialectModule:
+    """Athena, Hive and Vertica get no dialect module and fall back to generic types.
+
+    There is no dialect vocabulary to check a name against, so an unresolvable name
+    cannot be called a misspelling and keeps reporting an ordinary mismatch.
+    """
+
+    engine = _StubEngine("awsathena", dialect_module=None)
+
+    def test_generic_name_still_resolves(self):
+        success, observed = compare_column_type(self.engine, sa.types.INTEGER(), "INTEGER")
+        assert success is True
+        assert observed == "INTEGER"
+
+    def test_unresolvable_name_does_not_raise(self):
+        success, _obs = compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+        assert success is False
+
+    def test_unresolvable_name_in_a_list_does_not_raise(self):
+        success, _obs = compare_column_type_list(
+            self.engine,
+            sa.types.INTEGER(),
+            ["__NO_SUCH_TYPE__", "__ALSO_NO_SUCH_TYPE__"],
+        )
+        assert success is False
+
+    def test_non_type_name_does_not_raise_type_error(self):
+        success, _obs = compare_column_type(self.engine, sa.types.INTEGER(), "text")
+        assert success is False
+
+
+# ===========================================================================
 # CaseInsensitiveString — quoted behavior
 # ===========================================================================
 
