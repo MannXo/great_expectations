@@ -864,3 +864,18 @@ def test_success_for_type_list__INTEGER_oracle(batch_for_datasource: Batch) -> N
     )
     assert result.result["observed_value"] == "INTEGER"
     assert result.success, result.result
+
+
+@pytest.mark.filterwarnings("ignore:Did not recognize type:sqlalchemy.exc.SAWarning")
+@parameterize_batch_for_data_sources(
+    data_source_configs=[ClickHouseDatasourceTestConfig()],
+    data=DATA,
+)
+def test_type_list_resolving_to_nothing_raises_on_clickhouse(batch_for_datasource: Batch) -> None:
+    """ClickHouse answers an unrecognized spec with ``NullType`` instead of failing the lookup."""
+    result = batch_for_datasource.validate(
+        gxe.ExpectColumnValuesToBeInTypeList(column=INTEGER_COLUMN, type_list=["INTGER", "VARCHR"])
+    )
+    assert result.exception_info["raised_exception"] is True
+    assert "INTGER" in result.exception_info["exception_message"]
+    assert "clickhouse" in result.exception_info["exception_message"]
