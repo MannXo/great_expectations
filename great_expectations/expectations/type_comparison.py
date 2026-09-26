@@ -256,7 +256,7 @@ def _resolve_type_name(
         types = _generic_candidates(expected_type)
     if not types:
         logger.debug(f"Unrecognized type: {expected_type}")
-    return _Resolution(types=types, conclusive=conclusive)
+    return _Resolution(types=_include_floating_point_in_numeric(types), conclusive=conclusive)
 
 
 def _is_bigquery_geography_without_support(
@@ -311,6 +311,19 @@ def _generic_candidates(expected_type: str) -> list:
     if isinstance(generic_type, type) and issubclass(generic_type, sa.types.TypeEngine):
         return [generic_type]
     return []
+
+
+def _include_floating_point_in_numeric(types: list) -> list:
+    """Let an expected "Numeric" match floating-point columns on every SQLAlchemy version.
+
+    SQLAlchemy 2.1 moved Float, and with it every dialect's floating-point type, out from
+    under Numeric. Before 2.1 a floating-point column is an instance of Numeric, so an
+    expectation naming "Numeric" matched it; adding Float keeps that result on 2.1 and
+    changes nothing earlier, where Float is already a Numeric.
+    """
+    if sa.Numeric in types and sa.Float not in types:
+        return [*types, sa.Float]
+    return types
 
 
 def _get_redshift_sqlalchemy_types(type_module: ModuleType, expected_type: Any) -> list:
