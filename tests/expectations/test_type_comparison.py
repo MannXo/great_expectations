@@ -661,7 +661,12 @@ class TestSQLiteScalar:
 
     def test_unresolvable_type_raises(self):
         with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):
-            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__", strict=True)
+
+    def test_unresolvable_type_is_a_mismatch_without_strict(self):
+        success, observed = compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+        assert success is False
+        assert observed == "INTEGER"
 
 
 class TestSQLiteList:
@@ -810,7 +815,7 @@ class TestMySQLScalar:
 
     def test_unresolvable_type_raises(self):
         with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):
-            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__", strict=True)
 
 
 class TestMySQLList:
@@ -903,7 +908,13 @@ class TestPartialDialectModuleFallback:
 
     def test_name_in_neither_namespace_raises(self):
         with pytest.raises(InvalidExpectationConfigurationError, match="oracle"):
-            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__", strict=True)
+
+    def test_generic_alias_does_not_resolve(self):
+        """``sa.INT`` is ``INTEGER``; only a type's own class name resolves generically."""
+        success, observed = compare_column_type(self.engine, sa.types.INTEGER(), "INT")
+        assert success is False
+        assert observed == "INTEGER"
 
 
 # ===========================================================================
@@ -923,7 +934,7 @@ class TestNonTypeNamesInGenericNamespace:
     @pytest.mark.parametrize("name", ["text", "cast", "func", "select", "table"])
     def test_scalar_raises_rather_than_type_error(self, name):
         with pytest.raises(InvalidExpectationConfigurationError, match=name):
-            compare_column_type(self.engine, sa.types.INTEGER(), name)
+            compare_column_type(self.engine, sa.types.INTEGER(), name, strict=True)
 
     @pytest.mark.parametrize("name", ["text", "cast", "func", "select", "table"])
     def test_one_bad_name_does_not_poison_the_list(self, name):
@@ -1036,7 +1047,7 @@ class TestClickHouseUnrecognizedSpec:
 
     def test_unrecognized_spec_raises(self):
         with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):
-            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__")
+            compare_column_type(self.engine, sa.types.INTEGER(), "__NO_SUCH_TYPE__", strict=True)
 
     def test_unrecognized_spec_in_a_list_raises_when_nothing_resolves(self):
         with pytest.raises(InvalidExpectationConfigurationError, match="__NO_SUCH_TYPE__"):

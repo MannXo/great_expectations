@@ -95,12 +95,18 @@ def compare_column_type(
     execution_engine: SqlAlchemyExecutionEngine,
     actual_column_type: Any,
     expected_type: str,
+    *,
+    strict: bool = False,
 ) -> tuple[bool, Any]:
     """Compare an actual column type against an expected type string.
 
     Dispatches based on dialect:
     - For CASE_INSENSITIVE_DIALECTS: case-insensitive string comparison.
     - For all others: resolves expected_type to a SQLAlchemy type class and uses isinstance().
+
+    With ``strict``, a name the dialect can conclusively not resolve raises
+    InvalidExpectationConfigurationError. Without it, the name is a plain mismatch, which
+    callers that fall back to comparing the observed type name rely on.
 
     Returns:
         (success, observed_value) where observed_value is actual_column_type as-is
@@ -118,7 +124,7 @@ def compare_column_type(
         resolution = _resolve_type_name(
             execution_engine=execution_engine, expected_type=expected_type
         )
-        if not resolution.types and resolution.conclusive:
+        if strict and not resolution.types and resolution.conclusive:
             raise _unresolvable_type_error(execution_engine, [expected_type])
         success = isinstance(actual_column_type, tuple(resolution.types))
         return success, type(actual_column_type).__name__
@@ -306,10 +312,16 @@ def _generic_candidates(expected_type: str) -> list:
     """Resolve a type name against the top-level sqlalchemy namespace.
 
     That namespace is far wider than its types, so a name colliding with one of its
-    functions (``text``, ``cast``, ``select``) must not become a candidate.
+    functions (``text``, ``cast``, ``select``) must not become a candidate. Only a type's
+    own class name resolves here, not an alias: ``INT`` is ``INTEGER`` in this namespace,
+    and a dialect that does not export ``INT`` does not use that name.
     """
     generic_type = getattr(sa, expected_type, None)
-    if isinstance(generic_type, type) and issubclass(generic_type, sa.types.TypeEngine):
+    if (
+        isinstance(generic_type, type)
+        and issubclass(generic_type, sa.types.TypeEngine)
+        and generic_type.__name__ == expected_type
+    ):
         return [generic_type]
     return []
 
