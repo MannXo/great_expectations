@@ -249,6 +249,9 @@ def _resolve_type_name(
     conclusive = execution_engine.dialect_module is not None
 
     types = _dialect_candidates(type_module, expected_type) if conclusive else []
+    # A dialect module also exports submodules and functions (sqlite and mysql export a `json`
+    # module); only classes can be compared with isinstance.
+    types = [potential_type for potential_type in types if inspect.isclass(potential_type)]
     if not types:
         # A dialect module re-exports only the subset of generic types it chooses to.
         # Oracle exports NUMBER and VARCHAR2 but not INTEGER, yet reflects an INTEGER
@@ -296,9 +299,7 @@ def _dialect_candidates(type_module: ModuleType, expected_type: str) -> list:
         potential_type = getattr(type_module, expected_type)
     except AttributeError:
         return []
-    # A module namespace holds more than types, and a non-class candidate would make
-    # isinstance() raise TypeError rather than compare anything.
-    return [potential_type] if isinstance(potential_type, type) else []
+    return [potential_type]
 
 
 def _generic_candidates(expected_type: str) -> list:
